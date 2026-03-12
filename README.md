@@ -1,37 +1,73 @@
-# pytimelapse
+# PyTimelapse
 
-A Python library for creating timelapse videos from a sequence of images.
+Sistema de timelapse via câmera do notebook com interface gráfica (GUI).
 
-## Installation
+**Versão 2.0** — Interface Tkinter + Preview de câmera em tempo real + Persistência JSON
+
+---
+
+## Instalação de dependências
 
 ```bash
-pip install pytimelapse
+pip install opencv-python Pillow
 ```
 
-## Usage
+> **Linux (Ubuntu/Debian):** caso o Tkinter não esteja disponível:
+> ```bash
+> sudo apt install python3-tk
+> ```
 
-```python
-from pytimelapse import Timelapse
+## Uso
 
-# Create a timelapse from a directory of images
-tl = Timelapse(input_dir="./frames", output="timelapse.mp4", fps=24)
-tl.create()
+```bash
+python timelapse.py
 ```
 
-## Features
+A janela principal abre automaticamente — nenhum argumento de linha de comando é necessário.
 
-- Create timelapse videos from image sequences
-- Configurable FPS (frames per second)
-- Support for common image formats (JPG, PNG, BMP, TIFF)
-- Optional resize and crop
-- Progress reporting
+---
 
-## Requirements
+## Funcionalidades
 
-- Python 3.8+
-- OpenCV (`opencv-python`)
-- Pillow
+- **Interface gráfica** (Tkinter) — sem necessidade de terminal
+- **Preview em tempo real** da câmera dentro da própria janela
+- **Indicador visual** (borda vermelha piscante) a cada frame capturado
+- **Persistência de configurações** em `config.json` com auto-save
+- **Compilação automática** de frames em vídeo `.mp4` ao encerrar a sessão
+- **Barra de progresso** durante a compilação
+- Suporte a múltiplas câmeras (configurável por índice)
 
-## License
+## Configurações (config.json)
+
+| Campo | Padrão | Descrição |
+|-------|--------|-----------|
+| `interval` | `5` | Intervalo em segundos entre frames |
+| `fps` | `24` | FPS do vídeo de saída |
+| `duration` | `null` | Duração máxima em minutos (`null` = ilimitado) |
+| `camera_index` | `0` | Índice da câmera (0 = padrão) |
+| `output_dir` | `./timelapse_output` | Diretório de saída |
+| `keep_frames` | `false` | Preservar frames `.jpg` após compilação |
+
+## Estrutura de saída
+
+```
+timelapse_output/
+  session_2026-03-12_14-30-00/
+    frames/
+      frame_00001.jpg
+      ...
+    timelapse_2026-03-12_14-30-00.mp4
+    timelapse.log
+config.json
+```
+
+## Requisitos
+
+- Python 3.10+
+- opencv-python >= 4.5
+- Pillow >= 9.0
+- tkinter (nativo do Python)
+
+## Licença
 
 MIT
