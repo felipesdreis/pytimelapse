@@ -29,6 +29,7 @@ A janela principal abre automaticamente — nenhum argumento de linha de comando
 
 ## Funcionalidades
 
+- **Ícone de aplicação** gerado automaticamente via Pillow (câmera estilizada)
 - **Interface gráfica** (Tkinter) — sem necessidade de terminal
 - **Preview em tempo real** da câmera dentro da própria janela
 - **Indicador visual** (borda vermelha piscante) a cada frame capturado
@@ -37,13 +38,32 @@ A janela principal abre automaticamente — nenhum argumento de linha de comando
 - **Barra de progresso** durante a compilação
 - Suporte a múltiplas câmeras (configurável por índice)
 
+### Gerenciador de vídeos
+
+O botão **🎬 Vídeos** abre um modal com todos os `.mp4` já gerados no diretório de saída:
+
+- Lista ordenada por data de criação (mais recente primeiro)
+- Exibe nome do arquivo, tamanho em MB e data/hora
+- Duplo clique ou botão **Abrir Vídeo** abre com o player padrão do sistema
+- Funciona em Linux (`xdg-open`), macOS (`open`) e Windows (`os.startfile`)
+
+### Gravação com timer
+
+O botão **⏱ Iniciar com Timer** inicia uma sessão que para e compila automaticamente:
+
+1. Informe o número de minutos no campo **"Gravar por:"**
+2. Clique em **⏱ Iniciar com Timer**
+3. A gravação encerra automaticamente após o tempo configurado
+
+> O campo **"Duração máx (min)"** nas configurações também define um limite para o botão **Iniciar Timelapse** normal.
+
 ## Configurações (config.json)
 
 | Campo | Padrão | Descrição |
 |-------|--------|-----------|
 | `interval` | `5` | Intervalo em segundos entre frames |
 | `fps` | `24` | FPS do vídeo de saída |
-| `duration` | `null` | Duração máxima em minutos (`null` = ilimitado) |
+| `duration` | `null` | Duração máxima em minutos para modo normal (`null` = ilimitado) |
 | `camera_index` | `0` | Índice da câmera (0 = padrão) |
 | `output_dir` | `./timelapse_output` | Diretório de saída |
 | `keep_frames` | `false` | Preservar frames `.jpg` após compilação |
