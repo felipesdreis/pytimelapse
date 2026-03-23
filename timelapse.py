@@ -12,7 +12,9 @@ Dependências:
 import json
 import logging
 import os
+import platform
 import shutil
+import subprocess
 import threading
 import time
 from datetime import datetime, timedelta
@@ -69,6 +71,9 @@ class TimelapseApp(tk.Tk):
         self._running = False
         self._log_file: logging.FileHandler | None = None
 
+        # Active max duration for timer mode (seconds, overrides var_duration when set)
+        self._active_max_duration: int | None = None
+
         # Tkinter vars (will be populated by load_config)
         self.var_interval = tk.StringVar()
         self.var_fps = tk.StringVar()
@@ -76,10 +81,12 @@ class TimelapseApp(tk.Tk):
         self.var_camera_index = tk.StringVar()
         self.var_output_dir = tk.StringVar()
         self.var_keep_frames = tk.BooleanVar()
+        self.var_timer_minutes = tk.StringVar(value="5")
 
         self.load_config()
         self._build_ui()
         self._bind_traces()
+        self._create_app_icon()
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._clock_after_id: str | None = None
@@ -212,16 +219,52 @@ class TimelapseApp(tk.Tk):
         )
         row += 1
 
-        # Action buttons
+        # Action buttons — Start + Videos side by side
+        btn_row = tk.Frame(panel)
+        btn_row.grid(row=row, column=0, columnspan=3, sticky="ew", pady=2)
+        btn_row.columnconfigure(0, weight=1)
+        btn_row.columnconfigure(1, weight=0)
+
         self._btn_start = tk.Button(
-            panel,
+            btn_row,
             text="Iniciar Timelapse",
             bg="#27ae60",
             fg="white",
             font=("Helvetica", 10, "bold"),
-            command=self.start_timelapse,
+            command=self._start_normal,
         )
-        self._btn_start.grid(row=row, column=0, columnspan=3, sticky="ew", pady=2)
+        self._btn_start.grid(row=0, column=0, sticky="ew")
+
+        self._btn_videos = tk.Button(
+            btn_row,
+            text="🎬 Vídeos",
+            bg="#2980b9",
+            fg="white",
+            font=("Helvetica", 10, "bold"),
+            command=self._open_videos_modal,
+        )
+        self._btn_videos.grid(row=0, column=1, padx=(4, 0))
+        row += 1
+
+        # Timer mode row
+        timer_frame = tk.Frame(panel)
+        timer_frame.grid(row=row, column=0, columnspan=3, sticky="ew", pady=2)
+        timer_frame.columnconfigure(1, weight=1)
+
+        tk.Label(timer_frame, text="Gravar por:", anchor="w").grid(row=0, column=0, sticky="w")
+        self._entry_timer = tk.Entry(timer_frame, textvariable=self.var_timer_minutes, width=5)
+        self._entry_timer.grid(row=0, column=1, sticky="ew", padx=(4, 2))
+        tk.Label(timer_frame, text="min", anchor="w").grid(row=0, column=2, sticky="w")
+
+        self._btn_timer_start = tk.Button(
+            timer_frame,
+            text="⏱ Iniciar com Timer",
+            bg="#8e44ad",
+            fg="white",
+            font=("Helvetica", 9, "bold"),
+            command=self._start_with_timer,
+        )
+        self._btn_timer_start.grid(row=0, column=3, padx=(6, 0))
         row += 1
 
         self._btn_stop = tk.Button(
@@ -296,6 +339,7 @@ class TimelapseApp(tk.Tk):
             self._entry_output,
             self._btn_browse,
             self._chk_keep,
+            self._entry_timer,
         ]
 
     def _build_preview_panel(self) -> None:
@@ -319,6 +363,37 @@ class TimelapseApp(tk.Tk):
         self._photo_image = None  # keep reference to avoid GC
 
     # ------------------------------------------------------------------
+    # Icon
+    # ------------------------------------------------------------------
+
+    def _create_app_icon(self) -> None:
+        """Generate and set the application window icon using PIL."""
+        try:
+            from PIL import Image, ImageDraw, ImageTk
+        except ImportError:
+            return
+        size = 64
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Camera body
+        draw.rounded_rectangle([4, 18, 60, 54], radius=6, fill="#2c3e50")
+        # Lens outer ring
+        draw.ellipse([16, 22, 48, 50], fill="#3498db", outline="#2980b9", width=2)
+        # Lens inner
+        draw.ellipse([24, 30, 40, 44], fill="#1a252f")
+        # Lens highlight
+        draw.ellipse([26, 32, 34, 38], fill="#5dade2")
+        # Viewfinder bump
+        draw.rounded_rectangle([20, 10, 38, 20], radius=3, fill="#2c3e50")
+        # Flash
+        draw.rounded_rectangle([46, 12, 58, 20], radius=2, fill="#f1c40f")
+
+        photo = ImageTk.PhotoImage(img)
+        self._icon_photo = photo  # keep reference to prevent GC
+        self.iconphoto(True, photo)
+
+    # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
 
@@ -328,8 +403,110 @@ class TimelapseApp(tk.Tk):
         if chosen:
             self.var_output_dir.set(chosen)
 
+    def _open_videos_modal(self) -> None:
+        """Open a modal window listing all timelapse videos in the output directory."""
+        output_dir = Path(self.var_output_dir.get())
+
+        modal = tk.Toplevel(self)
+        modal.title("Vídeos Criados")
+        modal.minsize(560, 380)
+        modal.transient(self)
+        modal.grab_set()
+        modal.columnconfigure(0, weight=1)
+        modal.rowconfigure(1, weight=1)
+
+        # Header
+        tk.Label(modal, text="Timelapse Videos", font=("Helvetica", 12, "bold"), anchor="w").grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(10, 4)
+        )
+
+        # Listbox with scrollbar
+        list_frame = tk.Frame(modal)
+        list_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=12, pady=4)
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+
+        lb = tk.Listbox(list_frame, font=("Courier", 9), activestyle="dotbox", selectmode=tk.SINGLE)
+        lb.grid(row=0, column=0, sticky="nsew")
+        sb = ttk.Scrollbar(list_frame, orient="vertical", command=lb.yview)
+        sb.grid(row=0, column=1, sticky="ns")
+        lb.configure(yscrollcommand=sb.set)
+
+        # Populate list
+        videos: list[Path] = []
+        if output_dir.exists():
+            videos = sorted(output_dir.rglob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+        if videos:
+            for vp in videos:
+                size_mb = vp.stat().st_size / (1024 * 1024)
+                mtime = datetime.fromtimestamp(vp.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                lb.insert(tk.END, f"  {mtime}  {size_mb:5.1f} MB  {vp.name}")
+        else:
+            lb.insert(tk.END, "  Nenhum vídeo encontrado em: " + str(output_dir))
+
+        # Status bar
+        lbl_path = tk.Label(modal, text="", anchor="w", fg="#555", wraplength=520, justify="left")
+        lbl_path.grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 4))
+
+        def _on_select(event=None):
+            sel = lb.curselection()
+            if sel and videos:
+                lbl_path.config(text=str(videos[sel[0]]))
+
+        lb.bind("<<ListboxSelect>>", _on_select)
+
+        def _open_selected():
+            sel = lb.curselection()
+            if not sel or not videos:
+                return
+            path = videos[sel[0]]
+            try:
+                sys_name = platform.system()
+                if sys_name == "Windows":
+                    os.startfile(str(path))
+                elif sys_name == "Darwin":
+                    subprocess.Popen(["open", str(path)])
+                else:
+                    subprocess.Popen(["xdg-open", str(path)])
+            except Exception as exc:
+                messagebox.showerror("Erro ao abrir", str(exc), parent=modal)
+
+        lb.bind("<Double-1>", lambda e: _open_selected())
+
+        # Buttons
+        btn_frame = tk.Frame(modal)
+        btn_frame.grid(row=3, column=0, columnspan=2, sticky="e", padx=12, pady=(4, 10))
+
+        tk.Button(btn_frame, text="Abrir Vídeo", bg="#27ae60", fg="white",
+                  font=("Helvetica", 9, "bold"), command=_open_selected).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_frame, text="Fechar", command=modal.destroy).pack(side=tk.LEFT, padx=4)
+
+    def _start_normal(self) -> None:
+        """Start timelapse without a forced timer (respects 'Duração máx' field)."""
+        self._active_max_duration = None
+        self.start_timelapse()
+
+    def _start_with_timer(self) -> None:
+        """Start timelapse and stop automatically after the configured timer minutes."""
+        try:
+            minutes = int(self.var_timer_minutes.get().strip())
+            if minutes <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror(
+                "Timer inválido",
+                "Informe um número inteiro positivo de minutos para o timer.",
+            )
+            return
+        self._active_max_duration = minutes * 60
+        self.log_event(f"Modo Timer: gravação por {minutes} minuto(s).")
+        self.start_timelapse()
+
     def start_timelapse(self) -> None:
-        """Validate camera, create session directory and start threads."""
+        """Validate camera, create session directory and start threads.
+        Call _start_normal() or _start_with_timer() instead of calling this directly.
+        """
         try:
             import cv2  # noqa: F401
         except ImportError:
@@ -429,8 +606,11 @@ class TimelapseApp(tk.Tk):
     def capture_loop(self, stop_evt: threading.Event) -> None:
         """Capture frames at the configured interval."""
         interval = self._safe_int(self.var_interval.get(), DEFAULTS["interval"])
-        duration_raw = self.var_duration.get().strip()
-        max_duration = int(duration_raw) * 60 if duration_raw else None
+        if self._active_max_duration is not None:
+            max_duration = self._active_max_duration
+        else:
+            duration_raw = self.var_duration.get().strip()
+            max_duration = int(duration_raw) * 60 if duration_raw else None
 
         import cv2
 
@@ -674,6 +854,8 @@ class TimelapseApp(tk.Tk):
         """Enable or disable all configuration widgets."""
         for widget in self._all_config_widgets:
             widget.config(state=state)
+        self._btn_timer_start.config(state=state)
+        self._btn_videos.config(state=state)
 
     def on_close(self) -> None:
         """Safely shut down threads before destroying the window."""
